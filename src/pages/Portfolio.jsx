@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { usePortfolio } from '../contexts/PortfolioContext';
 import HoldingsTable from '../components/HoldingsTable';
 import AddTransactionModal from '../components/AddTransactionModal';
-import { Plus, Trash2, Edit3, FolderPlus, ChevronDown, ChevronUp } from 'lucide-react';
+import CSVImport from '../components/CSVImport';
+import { Plus, Trash2, Edit3, FolderPlus, ChevronDown, ChevronUp, Upload } from 'lucide-react';
 
 export default function Portfolio() {
   const {
@@ -11,6 +12,7 @@ export default function Portfolio() {
     createPortfolio, renamePortfolio, deletePortfolio
   } = usePortfolio();
   const [showAdd, setShowAdd] = useState(false);
+  const [showCSV, setShowCSV] = useState(false);
   const [showTx, setShowTx] = useState(false);
   const [showNewPortfolio, setShowNewPortfolio] = useState(false);
   const [newPortfolioName, setNewPortfolioName] = useState('');
@@ -72,6 +74,13 @@ export default function Portfolio() {
             >
               <FolderPlus size={14} />
               <span className="hidden sm:inline">New Portfolio</span>
+            </button>
+            <button
+              onClick={() => setShowCSV(true)}
+              className="btn-secondary flex items-center gap-1 text-sm"
+            >
+              <Upload size={14} />
+              <span className="hidden sm:inline">Import CSV</span>
             </button>
             <button
               onClick={() => setShowAdd(true)}
@@ -189,6 +198,7 @@ export default function Portfolio() {
       </div>
 
       <AddTransactionModal isOpen={showAdd} onClose={() => setShowAdd(false)} />
+      <CSVImport isOpen={showCSV} onClose={() => setShowCSV(false)} />
     </div>
   );
 }
