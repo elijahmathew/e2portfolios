@@ -2,60 +2,82 @@ import React, { useState, useRef } from 'react';
 import { Upload, FileText, X, Check, AlertTriangle, ChevronDown } from 'lucide-react';
 import { usePortfolio } from '../contexts/PortfolioContext';
 
+// Flexible column matcher — checks if header contains key phrases
+const matchCol = (patterns) => (h) => {
+  const t = h.trim().toLowerCase().replace(/[^a-z0-9\s]/g, '');
+  return patterns.some(p => t === p || t.includes(p));
+};
+
 // Brokerage detection patterns and column mappings
 const BROKERAGE_PROFILES = {
   fidelity: {
     name: 'Fidelity',
     detect: (headers) => headers.some(h => /account\s*name/i.test(h)) && headers.some(h => /symbol/i.test(h)),
     map: {
-      symbol: (h) => /^symbol$/i.test(h.trim()),
-      shares: (h) => /^quantity$/i.test(h.trim()),
-      avgPrice: (h) => /cost\s*basis\s*per\s*share/i.test(h.trim()),
+      symbol: matchCol(['symbol']),
+      shares: matchCol(['quantity']),
+      avgPrice: matchCol(['cost basis per share', 'average cost basis', 'avg cost']),
+      totalCostBasis: matchCol(['cost basis total', 'cost basis']),
     }
   },
   schwab: {
     name: 'Charles Schwab',
     detect: (headers) => headers.some(h => /symbol/i.test(h)) && headers.some(h => /cost\s*basis/i.test(h)) && !headers.some(h => /account\s*name/i.test(h)),
     map: {
-      symbol: (h) => /^symbol$/i.test(h.trim()),
-      shares: (h) => /^quantity$/i.test(h.trim()),
-      avgPrice: (h) => /^(price|cost\s*basis\s*per\s*share|average\s*cost)$/i.test(h.trim()),
+      symbol: matchCol(['symbol']),
+      shares: matchCol(['quantity']),
+      avgPrice: matchCol(['cost basis per share', 'average cost', 'price']),
+      totalCostBasis: matchCol(['cost basis total', 'cost basis']),
     }
   },
   robinhood: {
     name: 'Robinhood',
-    detect: (headers) => headers.some(h => /purchase\s*price\s*per\s*share/i.test(h)),
+    detect: (headers) => headers.some(h => /purchase\s*price/i.test(h)),
     map: {
-      symbol: (h) => /^symbol$/i.test(h.trim()),
-      shares: (h) => /^shares$/i.test(h.trim()),
-      avgPrice: (h) => /purchase\s*price\s*per\s*share/i.test(h.trim()),
+      symbol: matchCol(['symbol']),
+      shares: matchCol(['shares', 'quantity']),
+      avgPrice: matchCol(['purchase price per share', 'average cost', 'avg cost']),
     }
   },
   etrade: {
     name: 'E*TRADE',
     detect: (headers) => headers.some(h => /symbol/i.test(h)) && headers.some(h => /price\s*paid/i.test(h)),
     map: {
-      symbol: (h) => /^symbol$/i.test(h.trim()),
-      shares: (h) => /^(quantity|qty)$/i.test(h.trim()),
-      avgPrice: (h) => /price\s*paid/i.test(h.trim()),
+      symbol: matchCol(['symbol']),
+      shares: matchCol(['quantity', 'qty']),
+      avgPrice: matchCol(['price paid', 'cost per share']),
+    }
+  },
+  vanguard: {
+    name: 'Vanguard',
+    detect: (headers) => headers.some(h => /investment\s*name/i.test(h)) && headers.some(h => /share\s*price/i.test(h)),
+    map: {
+      symbol: matchCol(['symbol']),
+      shares: matchCol(['shares', 'quantity']),
+      avgPrice: matchCol(['share price', 'price']),
     }
   },
   webull: {
     name: 'Webull',
     detect: (headers) => headers.some(h => /ticker/i.test(h)) && headers.some(h => /avg\s*cost/i.test(h)),
     map: {
-      symbol: (h) => /^(ticker|symbol)$/i.test(h.trim()),
-      shares: (h) => /^(qty|quantity|shares)$/i.test(h.trim()),
-      avgPrice: (h) => /avg\s*cost/i.test(h.trim()),
+      symbol: matchCol(['ticker', 'symbol']),
+      shares: matchCol(['qty', 'quantity', 'shares']),
+      avgPrice: matchCol(['avg cost', 'average cost']),
     }
   },
   generic: {
     name: 'Generic',
-    detect: () => true, // fallback
+    detect: () => true,
     map: {
-      symbol: (h) => /^(symbol|ticker|stock|asset|name|code)$/i.test(h.trim()),
-      shares: (h) => /^(shares|quantity|qty|units|amount|count|num)$/i.test(h.trim()),
-      avgPrice: (h) => /^(price|avg\.?\s*price|average\s*price|cost|avg\.?\s*cost|entry|buy\s*price|purchase\s*price|cost\s*basis\s*per\s*share|price\s*per\s*share|unit\s*cost)$/i.test(h.trim()),
+      symbol: matchCol(['symbol', 'ticker', 'stock', 'code']),
+      shares: matchCol(['shares', 'quantity', 'qty', 'units', 'amount']),
+      avgPrice: matchCol([
+        'cost basis per share', 'avg price', 'average price', 'avg cost', 'average cost',
+        'entry price', 'buy price', 'purchase price', 'price per share', 'unit cost',
+        'cost per share', 'price paid', 'share price', 'price'
+      ]),
+      totalCostBasis: matchCol(['cost basis', 'total cost', 'book value']),
     }
   }
 };
@@ -171,6 +193,7 @@ export default function CSVImport({ isOpen, onClose }) {
         const symbolCol = headers.find(detected.map.symbol);
         const sharesCol = headers.find(detected.map.shares);
         const priceCol = headers.find(detected.map.avgPrice);
+        const totalCostCol = detected.map.totalCostBasis ? headers.find(detected.map.totalCostBasis) : null;
 
         if (!symbolCol) {
           // Need manual mapping
@@ -185,7 +208,15 @@ export default function CSVImport({ isOpen, onClose }) {
         for (const row of rows) {
           const symbol = cleanSymbol(row[symbolCol]);
           const shares = cleanNumber(row[sharesCol]);
-          const price = priceCol ? cleanNumber(row[priceCol]) : 0;
+          let price = priceCol ? cleanNumber(row[priceCol]) : NaN;
+
+          // Fallback: compute per-share price from total cost basis / shares
+          if ((isNaN(price) || price <= 0) && totalCostCol) {
+            const totalCost = cleanNumber(row[totalCostCol]);
+            if (!isNaN(totalCost) && totalCost > 0 && !isNaN(shares) && shares > 0) {
+              price = totalCost / shares;
+            }
+          }
 
           if (!symbol || symbol === 'TOTAL' || symbol === 'CASH' || symbol.includes('**') || symbol.length > 10) {
             continue;
@@ -350,7 +381,7 @@ export default function CSVImport({ isOpen, onClose }) {
             <div className="mt-4 p-3 bg-slate-700/50 rounded-lg">
               <p className="text-xs text-slate-400 font-medium mb-2">Supported brokerages:</p>
               <div className="flex flex-wrap gap-2">
-                {['Fidelity', 'Schwab', 'Robinhood', 'E*TRADE', 'Webull'].map(b => (
+                {['Fidelity', 'Schwab', 'Robinhood', 'Vanguard', 'E*TRADE', 'Webull'].map(b => (
                   <span key={b} className="text-xs bg-slate-600 text-slate-300 px-2 py-1 rounded">
                     {b}
                   </span>
