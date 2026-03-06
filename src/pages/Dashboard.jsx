@@ -3,37 +3,42 @@ import { usePortfolio } from '../contexts/PortfolioContext';
 import { AllocationChart, AllocationLegend, GainChart, DayChangeChart } from '../components/Charts';
 import HoldingsTable from '../components/HoldingsTable';
 import AddTransactionModal from '../components/AddTransactionModal';
-import { TrendingUp, TrendingDown, DollarSign, BarChart3, Plus, Activity } from 'lucide-react';
+import PriceAlerts from '../components/PriceAlerts';
+import AllocationTargets from '../components/AllocationTargets';
+import CorrelationFlags from '../components/CorrelationFlags';
+import {
+  TrendingUp, TrendingDown, DollarSign, BarChart3, Plus, Activity,
+  Bell, Briefcase, Shield, Target
+} from 'lucide-react';
 
 export default function Dashboard() {
   const {
     holdings, totalValue, totalCost, totalGain, totalGainPercent,
-    prices, priceLoading
+    prices, priceLoading,
+    wealthHoldings, activeHoldings, wealthValue, activeValue,
+    alerts, addAlert, deleteAlert, dismissAlert,
+    allocationTargets
   } = usePortfolio();
   const [showAdd, setShowAdd] = useState(false);
+  const [showAlerts, setShowAlerts] = useState(false);
+  const [bookView, setBookView] = useState('all'); // 'all' | 'wealth' | 'active'
 
-  // Calculate today's total change
+  // Today's change
   const todayChange = holdings.reduce((sum, h) => {
     const quote = prices[h.symbol];
     if (!quote) return sum;
-    const prevValue = quote.previousClose * h.shares;
-    const currValue = quote.price * h.shares;
-    return sum + (currValue - prevValue);
+    return sum + ((quote.price - quote.previousClose) * h.shares);
   }, 0);
   const todayChangePercent = totalValue > 0 ? (todayChange / (totalValue - todayChange)) * 100 : 0;
 
-  // Best and worst performers
-  const performers = holdings
-    .map(h => {
-      const quote = prices[h.symbol];
-      return {
-        symbol: h.symbol,
-        dayChange: quote?.changePercent || 0,
-        totalGain: h.avgPrice > 0 ? ((quote?.price || 0) - h.avgPrice) / h.avgPrice * 100 : 0
-      };
-    })
-    .sort((a, b) => b.dayChange - a.dayChange);
+  // Triggered alerts count
+  const triggeredAlerts = alerts.filter(a => a.status === 'triggered').length;
 
+  // Best/worst today
+  const performers = holdings.map(h => ({
+    symbol: h.symbol,
+    dayChange: prices[h.symbol]?.changePercent || 0,
+  })).sort((a, b) => b.dayChange - a.dayChange);
   const bestToday = performers[0];
   const worstToday = performers[performers.length - 1];
 
@@ -90,30 +95,90 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Quick action */}
-      <button
-        onClick={() => setShowAdd(true)}
-        className="btn-primary flex items-center gap-2"
-      >
-        <Plus size={18} />
-        Add Transaction
-      </button>
+      {/* Book split summary */}
+      {(wealthHoldings.length > 0 || activeHoldings.length > 0) && (
+        <div className="grid grid-cols-2 gap-3">
+          <div className="card border-emerald-500/20">
+            <div className="flex items-center gap-2 text-emerald-400 text-xs mb-1">
+              <Shield size={14} />
+              Wealth Book
+            </div>
+            <p className="text-lg font-bold">${wealthValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+            <div className="flex items-center gap-2 mt-1">
+              <div className="flex-1 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-emerald-500 rounded-full"
+                  style={{ width: `${totalValue > 0 ? (wealthValue / totalValue) * 100 : 0}%` }}
+                />
+              </div>
+              <span className="text-xs text-slate-400">
+                {totalValue > 0 ? ((wealthValue / totalValue) * 100).toFixed(0) : 0}%
+              </span>
+            </div>
+          </div>
+          <div className="card border-purple-500/20">
+            <div className="flex items-center gap-2 text-purple-400 text-xs mb-1">
+              <Briefcase size={14} />
+              Active Book
+            </div>
+            <p className="text-lg font-bold">${activeValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+            <div className="flex items-center gap-2 mt-1">
+              <div className="flex-1 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-purple-500 rounded-full"
+                  style={{ width: `${totalValue > 0 ? (activeValue / totalValue) * 100 : 0}%` }}
+                />
+              </div>
+              <span className="text-xs text-slate-400">
+                {totalValue > 0 ? ((activeValue / totalValue) * 100).toFixed(0) : 0}%
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
-      {/* Charts section */}
+      {/* Correlation warnings */}
+      <CorrelationFlags holdings={holdings} prices={prices} />
+
+      {/* Quick actions */}
+      <div className="flex gap-2 flex-wrap">
+        <button onClick={() => setShowAdd(true)} className="btn-primary flex items-center gap-2">
+          <Plus size={18} /> Add Transaction
+        </button>
+        <button onClick={() => setShowAlerts(true)} className="btn-secondary flex items-center gap-2 relative">
+          <Bell size={18} /> Price Alerts
+          {triggeredAlerts > 0 && (
+            <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full text-[10px] flex items-center justify-center">
+              {triggeredAlerts}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="card">
           <h3 className="text-sm font-medium text-slate-400 mb-3">Portfolio Allocation</h3>
           <AllocationChart />
           <AllocationLegend />
         </div>
-
         <div className="card">
           <h3 className="text-sm font-medium text-slate-400 mb-3">Gain/Loss by Holding</h3>
           <GainChart />
         </div>
       </div>
 
-      {/* Day performance chart */}
+      {/* Allocation targets */}
+      {allocationTargets.length > 0 && (
+        <div className="card">
+          <h3 className="text-sm font-medium text-slate-400 mb-3 flex items-center gap-2">
+            <Target size={14} /> Allocation Targets
+          </h3>
+          <AllocationTargets holdings={holdings} prices={prices} targets={allocationTargets} />
+        </div>
+      )}
+
+      {/* Day performance */}
       {holdings.length > 0 && (
         <div className="card">
           <h3 className="text-sm font-medium text-slate-400 mb-3">Today's Performance</h3>
@@ -145,13 +210,41 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Holdings table */}
+      {/* Holdings with book filter tabs */}
       <div className="card">
-        <h3 className="text-sm font-medium text-slate-400 mb-3">Holdings</h3>
-        <HoldingsTable />
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-medium text-slate-400">Holdings</h3>
+          <div className="flex gap-1">
+            {['all', 'wealth', 'active'].map(view => (
+              <button
+                key={view}
+                onClick={() => setBookView(view)}
+                className={`px-2.5 py-1 rounded text-xs transition-colors ${
+                  bookView === view
+                    ? view === 'wealth' ? 'bg-emerald-600 text-white'
+                      : view === 'active' ? 'bg-purple-600 text-white'
+                      : 'bg-cyan-600 text-white'
+                    : 'bg-slate-700 text-slate-400 hover:text-white'
+                }`}
+              >
+                {view.charAt(0).toUpperCase() + view.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <HoldingsTable bookFilter={bookView === 'all' ? null : bookView} />
       </div>
 
       <AddTransactionModal isOpen={showAdd} onClose={() => setShowAdd(false)} />
+      <PriceAlerts
+        isOpen={showAlerts}
+        onClose={() => setShowAlerts(false)}
+        alerts={alerts}
+        prices={prices}
+        onAddAlert={addAlert}
+        onDeleteAlert={deleteAlert}
+        onDismissAlert={dismissAlert}
+      />
     </div>
   );
 }
