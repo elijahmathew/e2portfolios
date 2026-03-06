@@ -233,6 +233,32 @@ export function PortfolioProvider({ children }) {
     await deleteDoc(ref);
   };
 
+  // Delete a single holding
+  const deleteHolding = async (holdingId) => {
+    if (!user || !activePortfolioId) return;
+    const ref = doc(
+      db, 'users', user.uid, 'portfolios', activePortfolioId, 'holdings', holdingId
+    );
+    await deleteDoc(ref);
+  };
+
+  // Clear all holdings in the active portfolio
+  const clearAllHoldings = async () => {
+    if (!user || !activePortfolioId) return;
+    const holdingsRef = collection(
+      db, 'users', user.uid, 'portfolios', activePortfolioId, 'holdings'
+    );
+    const snapshot = await getDocs(holdingsRef);
+    await Promise.all(snapshot.docs.map(d => deleteDoc(d.ref)));
+
+    // Also clear related transactions
+    const txRef = collection(
+      db, 'users', user.uid, 'portfolios', activePortfolioId, 'transactions'
+    );
+    const txSnapshot = await getDocs(txRef);
+    await Promise.all(txSnapshot.docs.map(d => deleteDoc(d.ref)));
+  };
+
   // Watchlist
   const addToWatchlist = async (symbol) => {
     if (!user) return;
@@ -248,6 +274,108 @@ export function PortfolioProvider({ children }) {
     if (!user) return;
     await deleteDoc(doc(db, 'users', user.uid, 'watchlist', watchlistId));
   };
+
+  // Update holding book tag (wealth/active)
+  const updateHoldingBook = async (holdingId, book) => {
+    if (!user || !activePortfolioId) return;
+    const ref = doc(
+      db, 'users', user.uid, 'portfolios', activePortfolioId, 'holdings', holdingId
+    );
+    await updateDoc(ref, { book });
+  };
+
+  // Update holding thesis data
+  const updateHoldingThesis = async (holdingId, thesisData) => {
+    if (!user || !activePortfolioId) return;
+    const ref = doc(
+      db, 'users', user.uid, 'portfolios', activePortfolioId, 'holdings', holdingId
+    );
+    await updateDoc(ref, { thesis: thesisData });
+  };
+
+  // Price alerts
+  const [alerts, setAlerts] = useState([]);
+
+  useEffect(() => {
+    if (!user) { setAlerts([]); return; }
+    const alertsRef = collection(db, 'users', user.uid, 'alerts');
+    const unsubscribe = onSnapshot(alertsRef, (snapshot) => {
+      setAlerts(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    return unsubscribe;
+  }, [user]);
+
+  // Check alerts against current prices
+  useEffect(() => {
+    if (!alerts.length || !Object.keys(prices).length) return;
+    alerts.forEach(async (alert) => {
+      if (alert.status !== 'active') return;
+      const quote = prices[alert.symbol];
+      if (!quote) return;
+      const triggered = alert.direction === 'above'
+        ? quote.price >= alert.targetPrice
+        : quote.price <= alert.targetPrice;
+      if (triggered) {
+        const ref = doc(db, 'users', user.uid, 'alerts', alert.id);
+        await updateDoc(ref, { status: 'triggered', triggeredAt: serverTimestamp() });
+      }
+    });
+  }, [alerts, prices, user]);
+
+  const addAlert = async ({ symbol, targetPrice, direction, meaning }) => {
+    if (!user) return;
+    const ref = collection(db, 'users', user.uid, 'alerts');
+    await addDoc(ref, {
+      symbol: symbol.toUpperCase(),
+      targetPrice: Number(targetPrice),
+      direction,
+      meaning,
+      status: 'active',
+      createdAt: serverTimestamp()
+    });
+  };
+
+  const deleteAlert = async (alertId) => {
+    if (!user) return;
+    await deleteDoc(doc(db, 'users', user.uid, 'alerts', alertId));
+  };
+
+  const dismissAlert = async (alertId) => {
+    if (!user) return;
+    const ref = doc(db, 'users', user.uid, 'alerts', alertId);
+    await updateDoc(ref, { status: 'dismissed' });
+  };
+
+  // Allocation targets
+  const [allocationTargets, setAllocationTargets] = useState([]);
+
+  useEffect(() => {
+    if (!user) { setAllocationTargets([]); return; }
+    const targetsRef = collection(db, 'users', user.uid, 'allocationTargets');
+    const unsubscribe = onSnapshot(targetsRef, (snapshot) => {
+      setAllocationTargets(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    return unsubscribe;
+  }, [user]);
+
+  const addAllocationTarget = async ({ label, targetPercent, type }) => {
+    if (!user) return;
+    const ref = collection(db, 'users', user.uid, 'allocationTargets');
+    await addDoc(ref, { label, targetPercent: Number(targetPercent), type: type || 'symbol' });
+  };
+
+  const deleteAllocationTarget = async (targetId) => {
+    if (!user) return;
+    await deleteDoc(doc(db, 'users', user.uid, 'allocationTargets', targetId));
+  };
+
+  // Book-level computed values
+  const wealthHoldings = holdings.filter(h => h.book === 'wealth');
+  const activeHoldings = holdings.filter(h => h.book === 'active');
+  const untaggedHoldings = holdings.filter(h => !h.book);
+
+  const wealthValue = wealthHoldings.reduce((sum, h) => sum + ((prices[h.symbol]?.price || 0) * h.shares), 0);
+  const activeValue = activeHoldings.reduce((sum, h) => sum + ((prices[h.symbol]?.price || 0) * h.shares), 0);
 
   // Computed values
   const totalValue = holdings.reduce((sum, h) => {
@@ -276,13 +404,29 @@ export function PortfolioProvider({ children }) {
     totalCost,
     totalGain,
     totalGainPercent,
+    wealthHoldings,
+    activeHoldings,
+    untaggedHoldings,
+    wealthValue,
+    activeValue,
+    alerts,
+    allocationTargets,
     createPortfolio,
     renamePortfolio,
     deletePortfolio,
     addTransaction,
     deleteTransaction,
+    deleteHolding,
+    clearAllHoldings,
     addToWatchlist,
     removeFromWatchlist,
+    updateHoldingBook,
+    updateHoldingThesis,
+    addAlert,
+    deleteAlert,
+    dismissAlert,
+    addAllocationTarget,
+    deleteAllocationTarget,
     refreshPrices
   };
 
